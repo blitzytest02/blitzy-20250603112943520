@@ -1,0 +1,16 @@
+{
+  "name": "blitzy-express-server",
+  "version": "1.0.0",
+  "description": "Express.js-based web application with multiple endpoints",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js"
+  },
+  "keywords": ["express", "node", "web", "server"],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "express": "^4.21.0"
+  }
+}
