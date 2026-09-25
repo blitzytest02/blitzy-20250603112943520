@@ -7,24 +7,32 @@
 // 2. HEAD /hello answers with the same status and headers, but no body.
 // 3. Path matching is exact: a query string still matches, while `/hello/`,
 //    `/HELLO` and `/` do not.
-// 4. Any other path the router receives is answered 404 Not Found, even a
-//    malformed one the URL parser cannot read, such as `//%zz/x`. Node itself
-//    answers 400 to a request its HTTP parser rejects, before any routing.
-// 5. A method other than GET or HEAD on /hello is answered 405.
+// 4. Any other path the router receives is answered 404 Not Found, whatever
+//    the method (GET, POST, PUT and DELETE are sent), and so is a malformed
+//    one the URL parser cannot read, such as `//%zz/x`. Node itself answers
+//    400 to a request its HTTP parser rejects, before any routing. A CONNECT
+//    request whose target is a host and port, not /hello, is answered 404
+//    too.
+// 5. A method other than GET or HEAD on /hello is answered 405: POST, PUT,
+//    DELETE, PATCH and OPTIONS, and CONNECT too, which Node hands to a
+//    separate listener.
 //
-// Nothing needs to be installed to run them. `node:test` (the test runner)
-// and `node:assert` (the checks) are modules built into Node.js, and `fetch`
-// (the HTTP client) is a global that Node provides to every module, just as
-// a browser does. `npm test` runs `node --test`, which finds this file on its
-// own because it lives in the `test/` directory, so no configuration file is
-// needed either.
+// Nothing needs to be installed to run them. `node:test` (the test runner),
+// `node:assert` (the checks) and `node:net` (plain network connections) are
+// modules built into Node.js, and `fetch` (the HTTP client) is a global that
+// Node provides to every module, just as a browser does. `fetch` refuses to
+// send CONNECT, so the two CONNECT requests go through `rawRequest` below,
+// which writes them out by hand over a `node:net` connection. `npm test`
+// runs `node --test`, which finds this file on its own because it lives in
+// the `test/` directory, so no configuration file is needed either.
 //
 // Between them, the five tests check the three parts of a response that any
 // HTTP client sees, each where the contract defines it:
 // - the status code, in every test;
 // - the headers that matter, where they matter: `Content-Type` and
 //   `Content-Length` for GET and HEAD /hello, `Content-Type` for the 404s
-//   in 'An unknown path is not found', and `Allow` for the 405;
+//   in 'An unknown path is not found' and for the 405s, and `Allow` for the
+//   405s;
 // - the body: `Hello world`, the empty body of a HEAD response, `Not Found`
 //   and `Method Not Allowed`.
 // Reading a body is not the same as checking it: for `/hello/`, `/HELLO`
@@ -34,9 +42,10 @@
 // test checks, such as the `Content-Length` of a 404, can change without
 // failing any test.
 //
-// Every request also carries a deadline (see `fetchWithDeadline` below), so a
-// server that never answers, or stops partway through a body, makes a test
-// fail instead of leaving `npm test` hanging.
+// Every request also carries a deadline (see `fetchWithDeadline` and
+// `rawRequest` below), so a server that never answers, stops partway through
+// a body, or never closes a CONNECT connection, makes a test fail instead of
+// leaving `npm test` hanging.
 
 import { test, before, after } from 'node:test';
 // The `strict` flavour of `node:assert` makes `assert.equal(actual, expected)`
@@ -45,6 +54,9 @@ import { test, before, after } from 'node:test';
 // compares the way `Object.is` does, which matches `===` except in two
 // cases: `NaN` counts as equal to `NaN`, and `0` and `-0` count as different.
 import assert from 'node:assert/strict';
+// `node:net` opens plain network connections. `rawRequest` below uses it for
+// the one kind of request `fetch` refuses to send, CONNECT.
+import net from 'node:net';
 // The `.js` extension is required: ES modules import files by their full name.
 import { createServer, HOST } from '../src/server.js';
 
@@ -63,16 +75,19 @@ import { createServer, HOST } from '../src/server.js';
 //   response, so it is reading the body (`await res.text()`) that rejects
 //   with the `TimeoutError` instead.
 // Either way, the test that is waiting on that step fails with that error.
+// `rawRequest`, further down, gives the connections it opens the same
+// deadline.
 //
 // Why 5 seconds: the server runs on this machine and answers in a few
 // milliseconds, so a real answer never comes close to the deadline. The wide
 // margin keeps a slow or busy computer from failing a test that is passing.
 const REQUEST_TIMEOUT_MS = 5000;
 
-// The server under test and the address it listens on. `before()` below sets
-// both once, before the first test runs, which is why they are `let` rather
-// than `const`.
+// The server under test, the port it listens on and its full address.
+// `before()` below sets all three once, before the first test runs, which is
+// why they are `let` rather than `const`.
 let server;
+let port;
 let baseUrl;
 
 /**
@@ -117,6 +132,80 @@ function fetchWithDeadline(path, options = {}) {
   });
 }
 
+/**
+ * Sends one request, written out as raw text, over a plain network
+ * connection with a deadline, and returns the server's answer split into its
+ * parts.
+ *
+ * `fetch` cannot send every request. The Fetch standard, which the `fetch`
+ * in Node.js follows, forbids the CONNECT method, so `fetch` rejects with a
+ * `TypeError` before anything is sent. This function works one level lower.
+ * `net.connect` opens a TCP connection to the server under test, the same
+ * kind of connection `fetch` and curl open underneath, and an HTTP request is
+ * simply text written on it. The function writes `requestText` exactly as
+ * given, collects every byte the server sends back until the server closes
+ * its side of the connection, and splits the result the way `curl -i` shows
+ * it: the status line, the headers, an empty line, and the body.
+ *
+ * It carries the same deadline as fetchWithDeadline. `net.connect` watches
+ * the `signal` it is given: once REQUEST_TIMEOUT_MS have passed, it destroys
+ * the connection, and the Promise returned here rejects with an `AbortError`
+ * whose `cause` is the `TimeoutError`. So a server that never answers, or
+ * answers but never closes the connection, makes the test fail instead of
+ * hanging. A connection that is refused or reset rejects the Promise too,
+ * with that error.
+ *
+ * @example
+ * const res = await rawRequest('CONNECT /hello HTTP/1.1\r\nHost: x\r\n\r\n');
+ * // res.statusLine is 'HTTP/1.1 405 Method Not Allowed'
+ *
+ * @param {string} requestText The complete request: the request line, then
+ *   one line per header, then an empty line. HTTP ends every one of those
+ *   lines with `\r\n` (carriage return and line feed), not just `\n`.
+ * @returns {Promise<{statusLine: string, headers: Map<string, string>,
+ *   body: string}>} The response. `headers` maps each header name, in lower
+ *   case, to its value, so `headers.get('allow')` reads a header the way
+ *   `res.headers.get('allow')` does on a `fetch` response. If the server
+ *   closed the connection without sending anything, every part is empty:
+ *   `statusLine` is `''`, so the test's check of the status line fails and
+ *   says so.
+ */
+function rawRequest(requestText) {
+  return new Promise((resolve, reject) => {
+    const socket = net.connect({
+      host: HOST,
+      port,
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    });
+    const chunks = [];
+
+    socket.on('error', reject);
+    socket.on('data', (chunk) => chunks.push(chunk));
+
+    // 'end' fires once the server has closed its side of the connection, so
+    // by then every byte of its answer has arrived. The headers end at the
+    // first empty line, `\r\n\r\n`; everything after it is the body.
+    socket.on('end', () => {
+      const [head, ...bodyParts] = Buffer.concat(chunks)
+        .toString()
+        .split('\r\n\r\n');
+      const [statusLine, ...headerLines] = head.split('\r\n');
+      const headers = new Map(
+        headerLines.map((line) => {
+          const colon = line.indexOf(':');
+          return [
+            line.slice(0, colon).toLowerCase(),
+            line.slice(colon + 1).trim(),
+          ];
+        }),
+      );
+      resolve({ statusLine, headers, body: bodyParts.join('\r\n\r\n') });
+    });
+
+    socket.write(requestText);
+  });
+}
+
 // `before()` runs once, before any test in this file.
 //
 // It creates the server with the same factory the real program uses and
@@ -158,7 +247,7 @@ before(async () => {
 
   // `server.address()` reports where the server is actually listening,
   // including the port the operating system picked for it.
-  const { port } = server.address();
+  port = server.address().port;
   baseUrl = `http://${HOST}:${port}`;
 });
 
@@ -178,7 +267,9 @@ before(async () => {
 // kept open for a next request that will never come, or holds a request
 // that a failed test left behind. `server.closeAllConnections()` closes them
 // all at once, so teardown finishes straight away instead of waiting on a
-// stalled request.
+// stalled request. A CONNECT connection is the one kind it cannot reach:
+// Node stops keeping track of a connection once it hands it to the 'connect'
+// listener, which is why that listener in src/server.js closes it itself.
 after(async () => {
   // When `before()` failed, there is no listening server to close: either
   // `createServer()` never returned, so `server` was never set, or `listen`
@@ -258,19 +349,29 @@ test('Path matching is exact', async () => {
 
 // Every path other than /hello is answered with a plain-text 404, so no
 // client is ever left waiting on a request the router does not recognise.
+//
+// The router looks at the path first, and only /hello goes on to have its
+// method checked, so an unknown path is a 404 whatever the method. The test
+// sends GET and three other methods to the same unknown path to hold the
+// router to that order: a router that checked the method before the path
+// would answer POST, PUT and DELETE here with a 405 instead.
 test('An unknown path is not found', async () => {
-  const res = await fetchWithDeadline('/goodbye');
-  assert.equal(res.status, 404, 'expected 404 for /goodbye');
-  assert.equal(
-    res.headers.get('content-type'),
-    'text/plain; charset=utf-8',
-    'expected text/plain for /goodbye',
-  );
-  assert.equal(
-    await res.text(),
-    'Not Found',
-    'expected Not Found for /goodbye',
-  );
+  for (const method of ['GET', 'POST', 'PUT', 'DELETE']) {
+    const res = await fetchWithDeadline('/goodbye', { method });
+
+    // Each message names the method, so a failure says which one went wrong.
+    assert.equal(res.status, 404, `expected 404 for ${method} /goodbye`);
+    assert.equal(
+      res.headers.get('content-type'),
+      'text/plain; charset=utf-8',
+      `expected text/plain for ${method} /goodbye`,
+    );
+    assert.equal(
+      await res.text(),
+      'Not Found',
+      `expected Not Found for ${method} /goodbye`,
+    );
+  }
 
   // A malformed request target gets a 404 too, not a crashed server.
   //
@@ -294,15 +395,95 @@ test('An unknown path is not found', async () => {
     'Not Found',
     'expected Not Found for //%zz/x',
   );
+
+  // A CONNECT request gets a 404 too, when its target is not /hello.
+  //
+  // CONNECT asks a proxy to open a tunnel to another server, and its usual
+  // target is that server's host and port, such as `127.0.0.1:3000`, rather
+  // than a path. Node hands CONNECT to the server's separate 'connect'
+  // listener in src/server.js, not to the request listener, and that
+  // listener answers such a target with the same 404. `fetch` cannot send
+  // CONNECT, so `rawRequest` writes the request out by hand; here it asks
+  // for a tunnel to the server under test itself.
+  const authority = `${HOST}:${port}`;
+  const connect = await rawRequest(
+    `CONNECT ${authority} HTTP/1.1\r\nHost: ${authority}\r\n\r\n`,
+  );
+  assert.equal(
+    connect.statusLine,
+    'HTTP/1.1 404 Not Found',
+    'expected 404 for CONNECT ' + authority,
+  );
+  assert.equal(
+    connect.headers.get('content-type'),
+    'text/plain; charset=utf-8',
+    'expected text/plain for CONNECT ' + authority,
+  );
+  assert.equal(
+    connect.body,
+    'Not Found',
+    'expected Not Found for CONNECT ' + authority,
+  );
 });
 
 // /hello answers only GET and HEAD. Any other method, such as POST, is
 // refused with 405 Method Not Allowed instead of a misleading success, and
 // the `Allow` header tells the client which methods would work.
+//
+// The test sends five different methods rather than POST alone, because the
+// rule is "everything except GET and HEAD", not "POST". A handler that
+// refused only the methods it had heard of, for example one that checked
+// `req.method === 'POST'`, would pass a POST-only test while answering PUT,
+// DELETE, PATCH and OPTIONS with a 200 and the greeting.
 test('An unsupported method is rejected', async () => {
-  const res = await fetchWithDeadline('/hello', { method: 'POST' });
+  for (const method of ['POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS']) {
+    const res = await fetchWithDeadline('/hello', { method });
 
-  assert.equal(res.status, 405);
-  assert.equal(res.headers.get('allow'), 'GET, HEAD');
-  assert.equal(await res.text(), 'Method Not Allowed');
+    // Each message names the method, so a failure says which one went wrong.
+    assert.equal(res.status, 405, `expected 405 for ${method} /hello`);
+    assert.equal(
+      res.headers.get('allow'),
+      'GET, HEAD',
+      `expected Allow: GET, HEAD for ${method} /hello`,
+    );
+    assert.equal(
+      res.headers.get('content-type'),
+      'text/plain; charset=utf-8',
+      `expected text/plain for ${method} /hello`,
+    );
+    assert.equal(
+      await res.text(),
+      'Method Not Allowed',
+      `expected Method Not Allowed for ${method} /hello`,
+    );
+  }
+
+  // CONNECT is refused the same way, even though it takes a different path
+  // through the server. Node never hands CONNECT to the request listener,
+  // so helloHandler never sees it: the separate 'connect' listener in
+  // src/server.js answers it, and then closes the connection. `fetch`
+  // cannot send CONNECT, so `rawRequest` writes the request out by hand.
+  const connect = await rawRequest(
+    `CONNECT /hello HTTP/1.1\r\nHost: ${HOST}:${port}\r\n\r\n`,
+  );
+  assert.equal(
+    connect.statusLine,
+    'HTTP/1.1 405 Method Not Allowed',
+    'expected 405 for CONNECT /hello',
+  );
+  assert.equal(
+    connect.headers.get('allow'),
+    'GET, HEAD',
+    'expected Allow: GET, HEAD for CONNECT /hello',
+  );
+  assert.equal(
+    connect.headers.get('content-type'),
+    'text/plain; charset=utf-8',
+    'expected text/plain for CONNECT /hello',
+  );
+  assert.equal(
+    connect.body,
+    'Method Not Allowed',
+    'expected Method Not Allowed for CONNECT /hello',
+  );
 });

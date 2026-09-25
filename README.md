@@ -20,7 +20,7 @@ Build and run a Node.js HTTP server with one endpoint, `/hello`, that answers wi
 
 This is a small Node.js HTTP server with exactly one endpoint, `/hello`. Send it a request for `/hello` and it answers with the text `Hello world`. That is the whole product. The point is not what the server does but how it is put together, so the source and test files are short and explain themselves in their comments. The configuration files, `package.json`, `package-lock.json` and `.nvmrc`, carry no comments, so this README explains them instead.
 
-It uses only what ships with Node.js: the built-in `node:http` module for the server, the built-in `node:test` and `node:assert` modules for the tests, and the global `fetch` function as the tests' HTTP client. There are no dependencies to install: no web framework, no test library and no build step.
+It uses only what ships with Node.js: the built-in `node:http` module for the server, the built-in `node:test` and `node:assert` modules for the tests, and the global `fetch` function as the tests' HTTP client, with the built-in `node:net` module for the one kind of request `fetch` cannot send. There are no dependencies to install: no web framework, no test library and no build step.
 
 Working through this tutorial, you will see how to:
 
@@ -108,7 +108,7 @@ The two lines starting with `>` come from npm: `npm start` runs the `start` scri
 
 The command does not return you to the prompt. The server keeps running in the foreground, waiting for requests, so leave this terminal open while you work through the next section.
 
-To stop the server, press **Ctrl+C** in this terminal. This works the same on macOS, Linux and Windows. The server closes, and in a macOS or Linux terminal, or in PowerShell when you typed plain `npm`, nothing more is printed and your prompt comes back. In Command Prompt (`cmd.exe`), or in PowerShell when you typed `npm.cmd` (see [PowerShell says running scripts is disabled](#powershell-says-running-scripts-is-disabled)), npm runs as a Windows batch file, so Windows then asks `Terminate batch job (Y/N)?`. Type `Y` and press Enter. The server has already closed at that point; the question is only about npm's batch file.
+To stop the server, press **Ctrl+C** in this terminal. This works the same on macOS, Linux and Windows. The server closes straight away, even while a browser or another client still has a connection open to it. In a macOS or Linux terminal, or in PowerShell when you typed plain `npm`, nothing more is printed and your prompt comes back. In Command Prompt (`cmd.exe`), or in PowerShell when you typed `npm.cmd` (see [PowerShell says running scripts is disabled](#powershell-says-running-scripts-is-disabled)), npm runs as a Windows batch file, so Windows then asks `Terminate batch job (Y/N)?`. Type `Y` and press Enter. The server has already closed at that point; the question is only about npm's batch file. For the exit status npm may report after Ctrl+C, see [Stopping cleanly](#stopping-cleanly-srcindexjs).
 
 ## Call the endpoint
 
@@ -238,6 +238,25 @@ Keep-Alive: timeout=5
 Method Not Allowed
 ```
 
+`CONNECT` is refused the same way, although it takes a different route through Node.js; [Checking the method](#checking-the-method-srchellojs) explains why:
+
+```bash
+curl -i -X CONNECT http://127.0.0.1:3000/hello
+```
+
+```text
+HTTP/1.1 405 Method Not Allowed
+Allow: GET, HEAD
+Content-Type: text/plain; charset=utf-8
+Content-Length: 18
+Date: <varies>
+Connection: close
+
+Method Not Allowed
+```
+
+The only difference from the `POST` answer is `Connection: close` in place of `Connection: keep-alive` and `Keep-Alive`: after answering a `CONNECT`, the server closes the connection. A `CONNECT` for any target other than `/hello` is answered `404 Not Found` in the same way.
+
 A path other than `/hello`, such as `/goodbye`, is answered with `404 Not Found`:
 
 ```bash
@@ -293,7 +312,7 @@ src/index.js  -->  src/server.js  -->  src/hello.js
 (starts it)        (routes it)         (answers /hello)
 ```
 
-The split between `src/index.js` and `src/server.js` is deliberate. Importing `src/server.js` does no work: it exports two constants (`DEFAULT_PORT` and `HOST`) and one function (`createServer`), keeps one private constant for parsing URLs, and opens no network socket. Only `src/index.js`, which is run and never imported, starts the application's server listening, on port 3000 or the port in `PORT`. That is what lets the tests import `createServer`, start their own server on a port of their choosing, and never touch port 3000.
+The split between `src/index.js` and `src/server.js` is deliberate. Importing `src/server.js` does no work: it exports two constants (`DEFAULT_PORT` and `HOST`) and one function (`createServer`), keeps one private constant and two private helper functions, which read the path out of a request and write out the answer to a `CONNECT` request, and opens no network socket. Only `src/index.js`, which is run and never imported, starts the application's server listening, on port 3000 or the port in `PORT`. That is what lets the tests import `createServer`, start their own server on a port of their choosing, and never touch port 3000.
 
 A good reading order is `src/hello.js`, then `src/server.js`, then `src/index.js`, then `test/hello.test.js`.
 
@@ -303,7 +322,7 @@ Each concept below is visible in the file named in its heading. The comments in 
 
 ### Creating a server (`src/server.js`)
 
-`http.createServer(listener)`, from the built-in `node:http` module, builds a server around one function, the *request listener*. Node.js calls that function once for every request that arrives and passes it two objects:
+`http.createServer(listener)`, from the built-in `node:http` module, builds a server around one function, the *request listener*. Node.js calls that function once for every request that arrives, except `CONNECT` (see [Checking the method](#checking-the-method-srchellojs)), and passes it two objects:
 
 - `req`, an `http.IncomingMessage`: what the client sent, meaning the method, the URL and the headers;
 - `res`, an `http.ServerResponse`: what you send back, meaning a status code, headers and a body.
@@ -312,7 +331,7 @@ This project's `createServer()` returns that server without starting it. Whoever
 
 ### Routing on the path (`src/server.js`)
 
-`req.url` is the raw request target, and it includes the query string: a request for `/hello?name=ada` has a `req.url` of `/hello?name=ada`, which would never equal `/hello`. So the request listener parses it with `new URL(req.url, 'http://localhost')` and keeps only the `pathname` part, `/hello`.
+`req.url` is the raw request target, and it includes the query string: a request for `/hello?name=ada` has a `req.url` of `/hello?name=ada`, which would never equal `/hello`. So the request listener parses it with `new URL(req.url, 'http://localhost')` and keeps only the `pathname` part, `/hello`. That parsing lives in one small private function, `pathnameOf`, which the `'connect'` listener described under [Checking the method](#checking-the-method-srchellojs) uses too, so both route on exactly the same path.
 
 The request target is usually a relative URL such as `/hello?name=ada`, made of the pathname `/hello` and the query `?name=ada`, and `new URL` needs a complete address, the base, to resolve a relative URL against. Not every address works as that base: a `mailto:` address cannot have a relative URL resolved against it at all, and a base with a path of its own, such as `http://localhost/app/`, changes where a target that does not start with `/` lands. A web address with nothing after the host, such as `http://localhost`, is a suitable base: `/hello?name=ada` resolves against it to `http://localhost/hello?name=ada`, whose pathname is `/hello`. Only the pathname is read back out, so neither the host the base names nor the query is ever used. The base is a fixed literal, `'http://localhost'`, rather than one built from the request's `Host` header, on purpose. The host is not needed, and a `Host` value that Node's HTTP parser accepts can still be one the URL parser rejects. An error thrown inside the request listener is caught by nothing, so it would stop the whole server. For the same reason, the listener first checks the target with `URL.canParse`: a target that cannot be parsed matches no route and receives an ordinary 404 instead of crashing the server.
 
@@ -333,6 +352,8 @@ The `404` branch is required, not a nicety. If the listener simply returned for 
 ### Checking the method (`src/hello.js`)
 
 `helloHandler` looks at `req.method` before anything else. `GET` (what a browser or a plain `curl` sends) and `HEAD` are served. Any other method is refused with `405 Method Not Allowed`, the header `Allow: GET, HEAD` and the body `Method Not Allowed`, rather than with a success the client would wrongly trust. An early `return` ends the function right after the refusal.
+
+One method never reaches `helloHandler`: `CONNECT`. A client sends `CONNECT` to ask a proxy server to open a tunnel to another server, such as `CONNECT example.com:443`, after which the connection carries whatever the two ends send rather than HTTP. So Node.js never calls the request listener for it. It emits a separate `'connect'` event on the server instead, and hands its listener the request together with the raw network connection, a *socket*, and no `res` object. On a server with no `'connect'` listener, Node.js closes the connection without sending anything, and curl reports `Empty reply from server`. This server is not a proxy, so `src/server.js` registers a `'connect'` listener that refuses every `CONNECT`: `/hello` receives the same `405` with `Allow: GET, HEAD` and `Method Not Allowed`, and any other target receives `404` with `Not Found`. With no `res` to call `writeHead` and `end` on, the listener writes the status line, the headers and the body out as text itself, adds `Connection: close`, and closes the connection once the answer is sent, because nothing else would. It also listens for the socket's `error` event, for example a client resetting the connection before the answer is sent: Node.js stops listening for errors on a socket it hands over, and an `error` event that nothing listens for would stop the whole server.
 
 `HEAD` needs no code of its own. For a `HEAD` request, Node.js sends the status line and headers and drops the body automatically. `Content-Length: 11` is still sent, because for `HEAD` that header reports the size of the body a `GET` would receive.
 
@@ -377,7 +398,9 @@ Because `listen` returns before the operating system answers, the failure cannot
 
 ### Stopping cleanly (`src/index.js`)
 
-Pressing Ctrl+C sends the program the `SIGINT` ("interrupt") signal. `src/index.js` handles it by calling `server.close`, which stops accepting new connections, closes connections that are sitting idle, and waits for any request still in progress to finish. The process then exits with code `0`, meaning "ended normally". The same handler also covers `SIGTERM`, the stop request that process managers use on macOS and Linux, so you never need anything other than Ctrl+C yourself.
+Pressing Ctrl+C sends the program the `SIGINT` ("interrupt") signal. `src/index.js` handles it with two calls. `server.close` stops accepting new connections and closes the connections that are sitting idle. Then `server.closeAllConnections` closes every connection that is still open. The second call is needed because browsers open spare connections ahead of time and may not have sent a request on them yet. Node counts such a connection as busy, not idle, so `server.close` alone would leave it open, and the server would keep running after Ctrl+C until the browser dropped it. Closing it cuts nothing short: every response is written in full the moment its request arrives, so the only thing dropped is a request that is still arriving. Once no connection is left, the process exits with code `0`, meaning "ended normally". The same handler also covers `SIGTERM`, the stop request that process managers use on macOS and Linux, so you never need anything other than Ctrl+C yourself.
+
+When you start the server with `npm start` on macOS or Linux, npm runs the `start` script through the system shell, `sh`, and Ctrl+C reaches that shell as well as the server. On Linux distributions where `sh` is dash, such as Debian and Ubuntu, dash is stopped by the interrupt, so `echo $?` right after Ctrl+C prints `130` (128 plus 2, the number of `SIGINT`) rather than `0`. The server itself still exited with code `0`. To see that, start it with `node src/index.js` instead, stop it with Ctrl+C, and `echo $?` prints `0`.
 
 ### ES modules (`package.json`, `src/server.js`)
 
@@ -482,7 +505,7 @@ On Node.js 24 the output looks like this (the timings vary):
 
 The lines that matter are `ℹ pass 5` and `ℹ fail 0`: all five tests passed. Node.js 22 prints the same summary in a terminal. When the output is not a terminal, for example when it is piped into a file or a CI log, Node.js 22 uses the TAP format instead, and the same result reads `# pass 5` and `# fail 0`; `node --test --test-reporter=tap` asks for that format on any version.
 
-`npm test` runs `node --test`, which finds test files by convention, including anything inside a `test/` directory. So it finds `test/hello.test.js` with no configuration file. Nothing is installed for the tests either: the runner is `node:test`, the checks come from `node:assert/strict`, and the HTTP client is the global `fetch`, all built into Node.js.
+`npm test` runs `node --test`, which finds test files by convention, including anything inside a `test/` directory. So it finds `test/hello.test.js` with no configuration file. Nothing is installed for the tests either: the runner is `node:test`, the checks come from `node:assert/strict`, and the HTTP client is the global `fetch`, all built into Node.js. `fetch` refuses to send `CONNECT`, so the two `CONNECT` checks write their requests out by hand over a plain connection from the built-in `node:net` module.
 
 The five tests, and what each one checks:
 
@@ -491,8 +514,8 @@ The five tests, and what each one checks:
 | `GET /hello returns the greeting` | Status `200`, `Content-Type: text/plain; charset=utf-8`, `Content-Length: 11`, and a body of exactly `Hello world` |
 | `HEAD /hello returns headers only` | Status `200`, the same two headers, and an empty body |
 | `Path matching is exact` | `/hello?name=ada` returns `200` with `Hello world`; `/hello/`, `/HELLO` and `/` each return `404` |
-| `An unknown path is not found` | `/goodbye` returns `404`, `text/plain; charset=utf-8` and `Not Found`, and so does a malformed request target, instead of crashing the server |
-| `An unsupported method is rejected` | `POST /hello` returns `405`, `Allow: GET, HEAD` and `Method Not Allowed` |
+| `An unknown path is not found` | `GET`, `POST`, `PUT` and `DELETE` on `/goodbye` each return `404`, `text/plain; charset=utf-8` and `Not Found`. So do a malformed request target, instead of crashing the server, and a `CONNECT` whose target is a host and port |
+| `An unsupported method is rejected` | `POST`, `PUT`, `DELETE`, `PATCH` and `OPTIONS` on `/hello` each return `405`, `Allow: GET, HEAD`, `text/plain; charset=utf-8` and `Method Not Allowed`, and so does `CONNECT /hello` |
 
 The tests listen on port `0`, which asks the operating system for any free port. That is why they pass whether or not port 3000 is free, including while your own `npm start` is still running in another terminal.
 
@@ -589,7 +612,7 @@ A message beginning `curl: (7) Failed to connect to 127.0.0.1 port 3000` means n
 
 ### Add a second route
 
-The natural exercise is a second endpoint, for example `/goodbye` answering `Goodbye world`. It takes one new handler module and one new branch in the router:
+The natural exercise is a second endpoint, for example `/goodbye` answering `Goodbye world`. It takes one new handler module, one new branch in the router, and one more path in the router's `CONNECT` check:
 
 1. Copy `src/hello.js` to `src/goodbye.js`. In the copy, rename `helloHandler` to `goodbyeHandler`, and change `GREETING` to `'Goodbye world'`. The method check and the headers stay as they are, and no number in the code needs to change: `Content-Length` is computed by `Buffer.byteLength(GREETING)`, so it becomes `13` by itself. The comments were copied too, though, and they still describe `/hello`. Read every comment in the copy from top to bottom and rewrite each one that no longer describes `goodbye.js`: mentions of `src/hello.js`, `/hello` and `helloHandler` become `src/goodbye.js`, `/goodbye` and `goodbyeHandler`, `Hello world` becomes `Goodbye world`, the 11-byte length becomes 13 bytes, and any remark that this is the project's only endpoint needs rewording, because it no longer is. A comment that no longer matches its code misleads the next person who reads it.
 2. In `src/server.js`, import the new handler next to the existing import, and add one branch beside the `/hello` one:
@@ -603,6 +626,12 @@ The natural exercise is a second endpoint, for example `/goodbye` answering `Goo
          goodbyeHandler(req, res);
          return;
        }
+   ```
+
+   Then, further down the same file, add the new path to the check in the `'connect'` listener, so that a `CONNECT` to `/goodbye` is refused with `405`, like every other method `goodbyeHandler` does not serve. Without it, `CONNECT /goodbye` is answered `404`:
+
+   ```js
+       if (pathname === '/hello' || pathname === '/goodbye') {
    ```
 
 3. In `test/hello.test.js`, add a test for the new route, modelled on `GET /hello returns the greeting`, with a name of its own such as `GET /goodbye returns the greeting`. The new test requests `/goodbye` and expects status `200`, the same `Content-Type`, `Content-Length` `'13'`, and the body `Goodbye world`. If you start from a copy of the `/hello` test, its comments need the same update as in step 1: any mention of `/hello`, `Hello world` or `11` no longer describes the new test.

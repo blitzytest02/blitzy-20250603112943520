@@ -140,13 +140,30 @@ server.listen(port, HOST, () => {
 // never sends it, so there its handler simply never runs.
 //
 // Without these handlers Node would end the process the instant a signal
-// arrives. With them the stop is deliberate: `server.close` stops accepting
-// new connections, closes connections that are sitting idle, and calls its
-// callback once every connection still open has finished. Then the process
-// exits with code 0, which means "ended normally". Nothing is printed: the
-// returning shell prompt is the sign that the server has stopped.
+// arrives. With them the stop is deliberate, and it takes two calls.
+// `server.close` stops accepting new connections and closes the connections
+// that are sitting idle. Its callback runs once no connection is left, and
+// exits with code 0, which means "ended normally". Then
+// `server.closeAllConnections` closes every connection that is still open, so
+// that moment comes straight away. (A CONNECT request's connection is the one
+// kind it does not reach, and it does not need to: src/server.js closes that
+// connection itself as soon as it has answered.)
+//
+// Why is `close` not enough on its own? A client can open a connection and
+// not send a request on it yet. Browsers open such spare connections ahead of
+// time, so that their next request starts sooner, and Node counts them as
+// busy, not idle, so `close` leaves them open. One of them would keep the
+// program running after Ctrl+C until the browser dropped it, and the stopped
+// server would even answer requests sent on it. Closing every connection
+// cuts nothing short: src/server.js and src/hello.js write each response in
+// full the moment its request arrives, so the only thing dropped is a request
+// that is still arriving.
+//
+// Nothing is printed: the returning shell prompt is the sign that the server
+// has stopped.
 function shutdown() {
   server.close(() => process.exit(0));
+  server.closeAllConnections();
 }
 
 process.on('SIGINT', shutdown);
