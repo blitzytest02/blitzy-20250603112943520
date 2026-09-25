@@ -54,7 +54,9 @@ The version must be `v22.0.0` or later, the floor that `package.json` declares, 
 v24.21.0
 ```
 
-If you use a Node.js version manager such as nvm, the `.nvmrc` file names the development line, `24`. Running `nvm use` in the project folder switches to Node.js 24 if a 24 release is already installed. If none is, nvm stops and tells you to run `nvm install 24`: do that first, and it installs the latest 24.x release and switches to it. The file is advisory: nothing in the project reads it, and you do not need to switch versions if yours is already on Node.js 22 or 24.
+Passing this check means the project runs, not that your Node.js is up to date. Node.js ships security fixes as new releases on each supported line, so an early 22.x or 24.x release still passes the floor but lacks fixes that later releases on the same line contain. Install the newest release of your line, and update it whenever Node.js announces a security release. The Node.js Releases page, <https://nodejs.org/en/about/previous-releases>, lists the newest version on each line, and security releases are announced at <https://nodejs.org/en/blog/vulnerability>.
+
+If you use a Node.js version manager such as nvm, the `.nvmrc` file names the development line, `24`. Running `nvm use` in the project folder switches to Node.js 24 if a 24 release is already installed. If none is, nvm stops and tells you to run `nvm install 24`: do that first, and it installs the latest 24.x release and switches to it. The file is advisory: nothing in the project reads it, and you do not need to switch to another line if yours is already on Node.js 22 or 24.
 
 ## Install
 
@@ -310,7 +312,7 @@ This project's `createServer()` returns that server without starting it. Whoever
 
 `req.url` is the raw request target, and it includes the query string: a request for `/hello?name=ada` has a `req.url` of `/hello?name=ada`, which would never equal `/hello`. So the request listener parses it with `new URL(req.url, 'http://localhost')` and keeps only the `pathname` part, `/hello`.
 
-`new URL` needs a complete address to resolve a path against, and not every address works as that base: a `mailto:` address cannot have a path resolved against it at all, and a base with a path of its own, such as `http://localhost/app/`, changes where a target that does not start with `/` lands. A web address with nothing after the host, such as `http://localhost`, is a suitable base: `/hello?name=ada` resolves against it to exactly that path, and because only the path is read back out, the host it names is never used. The base is a fixed literal, `'http://localhost'`, rather than one built from the request's `Host` header, on purpose. The host is not needed, and a `Host` value that Node's HTTP parser accepts can still be one the URL parser rejects. An error thrown inside the request listener is caught by nothing, so it would stop the whole server. For the same reason, the listener first checks the target with `URL.canParse`: a target that cannot be parsed matches no route and receives an ordinary 404 instead of crashing the server.
+The request target is usually a relative URL such as `/hello?name=ada`, made of the pathname `/hello` and the query `?name=ada`, and `new URL` needs a complete address, the base, to resolve a relative URL against. Not every address works as that base: a `mailto:` address cannot have a relative URL resolved against it at all, and a base with a path of its own, such as `http://localhost/app/`, changes where a target that does not start with `/` lands. A web address with nothing after the host, such as `http://localhost`, is a suitable base: `/hello?name=ada` resolves against it to `http://localhost/hello?name=ada`, whose pathname is `/hello`. Only the pathname is read back out, so neither the host the base names nor the query is ever used. The base is a fixed literal, `'http://localhost'`, rather than one built from the request's `Host` header, on purpose. The host is not needed, and a `Host` value that Node's HTTP parser accepts can still be one the URL parser rejects. An error thrown inside the request listener is caught by nothing, so it would stop the whole server. For the same reason, the listener first checks the target with `URL.canParse`: a target that cannot be parsed matches no route and receives an ordinary 404 instead of crashing the server.
 
 Matching is exact and case-sensitive:
 
@@ -324,7 +326,7 @@ Matching is exact and case-sensitive:
 
 These are decisions, not bugs: the router compares the path with `'/hello'` and nothing else, and it does not normalize slashes or letter case.
 
-The `404` branch is required, not a nicety. A request listener that returns without ending the response sends nothing back, and the client sits waiting on an open connection until it gives up.
+The `404` branch is required, not a nicety. If the listener simply returned for an unknown path without writing and ending a reply, the client would get nothing back and would sit waiting on an open connection until it gave up. Sending some data is not the same as finishing: `res.write` can send the status line, the headers and part of a body early, but until `res.end` is called the response is unfinished and the client keeps waiting for the rest.
 
 ### Checking the method (`src/hello.js`)
 
@@ -344,12 +346,12 @@ res.writeHead(200, {
 res.end(GREETING);
 ```
 
-`res.writeHead(status, headers)` sets the status line and the headers, which always travel before the body. `res.end(body)` sends the body and marks the response as finished. Every response must be ended; until it is, the client keeps waiting for more.
+`res.writeHead(status, headers)` sets the status line and the headers, which always travel before any body. `res.end(body)` hands Node.js the body and marks the response as finished: for a `GET`, Node.js sends the 11 bytes of `GREETING` after the headers, and for a `HEAD` it drops them, as described above. Every response must be ended; until it is, the client keeps waiting for more.
 
 Both headers are set explicitly:
 
 - `Content-Type: text/plain; charset=utf-8` tells the client the body is plain text encoded as UTF-8, so a browser shows the words as text instead of guessing the type or offering a file download.
-- `Content-Length` tells the client exactly how many bytes of body to expect, so it knows where the response ends. `Buffer.byteLength` counts bytes, not characters. The two are equal for `Hello world` (11), but an accented letter takes two bytes in UTF-8, and the header must carry the byte count.
+- `Content-Length` is the size, in bytes, of the body a `GET` receives. After a `GET`, the client reads exactly that many bytes of body, so it knows where the response ends; a `HEAD` response carries the same header, but no body follows it. `Buffer.byteLength` counts bytes, not characters. The two are equal for `Hello world` (11), but an accented letter takes two bytes in UTF-8, and the header must carry the byte count.
 
 `GREETING` is the constant `'Hello world'`, defined at the top of the same file, next to the code that sends it.
 
@@ -532,7 +534,7 @@ The process exits with code `1`. Another program already holds the port named in
 
 `node --version` prints a version below `v22.0.0`, and `npm install` prints an `EBADENGINE` "Unsupported engine" warning that names `node-hello-tutorial@1.0.0`, the required range `>=22.0.0`, and your current version. npm continues after the warning, but this project is not supported on that version.
 
-Install a current LTS release of Node.js, 24 recommended, from <https://nodejs.org>, or with your version manager (for example `nvm install 24`). Open a new terminal and check `node --version` again.
+Install the newest release of a supported Node.js LTS line, 24 recommended, from <https://nodejs.org>, or with your version manager (for example `nvm install 24`). Open a new terminal and check `node --version` again.
 
 ### `curl` in PowerShell prints something unexpected
 
@@ -548,7 +550,7 @@ A message beginning `curl: (7) Failed to connect to 127.0.0.1 port 3000` means n
 
 The natural exercise is a second endpoint, for example `/goodbye` answering `Goodbye world`. It takes one new handler module and one new branch in the router:
 
-1. Copy `src/hello.js` to `src/goodbye.js`. In the copy, rename `helloHandler` to `goodbyeHandler`, and change `GREETING` to `'Goodbye world'`. The method check and the headers stay as they are.
+1. Copy `src/hello.js` to `src/goodbye.js`. In the copy, rename `helloHandler` to `goodbyeHandler`, and change `GREETING` to `'Goodbye world'`. The method check and the headers stay as they are, and no number in the code needs to change: `Content-Length` is computed by `Buffer.byteLength(GREETING)`, so it becomes `13` by itself. The comments were copied too, though, and they still describe `/hello`. Read every comment in the copy from top to bottom and rewrite each one that no longer describes `goodbye.js`: mentions of `src/hello.js`, `/hello` and `helloHandler` become `src/goodbye.js`, `/goodbye` and `goodbyeHandler`, `Hello world` becomes `Goodbye world`, the 11-byte length becomes 13 bytes, and any remark that this is the project's only endpoint needs rewording, because it no longer is. A comment that no longer matches its code misleads the next person who reads it.
 2. In `src/server.js`, import the new handler next to the existing import, and add one branch beside the `/hello` one:
 
    ```js
@@ -562,8 +564,8 @@ The natural exercise is a second endpoint, for example `/goodbye` answering `Goo
        }
    ```
 
-3. In `test/hello.test.js`, add a test for the new route, modelled on `GET /hello returns the greeting`.
-4. Run `npm test`. The test `An unknown path is not found` now fails, because it uses `/goodbye` as its example of a path the server does not know, and that path now exists. That failure is the tests doing their job: change the path in that test to one that is still unknown, such as `/nowhere`, and run `npm test` again.
+3. In `test/hello.test.js`, add a test for the new route, modelled on `GET /hello returns the greeting`, with a name of its own such as `GET /goodbye returns the greeting`. The new test requests `/goodbye` and expects status `200`, the same `Content-Type`, `Content-Length` `'13'`, and the body `Goodbye world`. If you start from a copy of the `/hello` test, its comments need the same update as in step 1: any mention of `/hello`, `Hello world` or `11` no longer describes the new test.
+4. Run `npm test`. The test `An unknown path is not found` now fails, because it uses `/goodbye` as its example of a path the server does not know, and that path now exists. That failure is the tests doing their job: change `/goodbye` in that test, in the request and in its failure messages, to a path that is still unknown, such as `/nowhere`, and run `npm test` again. Last, bring the comments that describe the whole project up to date in the same way as in step 1: in `src/hello.js`, `src/index.js`, `src/server.js` and `test/hello.test.js`, look for any that draw the chain of source files, list which paths the router answers, count the tests, or say that `/hello` is the only endpoint and every other path gets a 404.
 
 ### What this project leaves out, on purpose
 

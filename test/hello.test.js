@@ -7,7 +7,9 @@
 // 2. HEAD /hello answers with the same status and headers, but no body.
 // 3. Path matching is exact: a query string still matches, while `/hello/`,
 //    `/HELLO` and `/` do not.
-// 4. Any other path, even a malformed one, is answered 404 Not Found.
+// 4. Any other path the router receives is answered 404 Not Found, even a
+//    malformed one the URL parser cannot read, such as `//%zz/x`. Node itself
+//    answers 400 to a request its HTTP parser rejects, before any routing.
 // 5. A method other than GET or HEAD on /hello is answered 405.
 //
 // Nothing needs to be installed to run them. `node:test` (the test runner)
@@ -17,16 +19,31 @@
 // own because it lives in the `test/` directory, so no configuration file is
 // needed either.
 //
-// Each test reads a response the way any HTTP client would: the status code,
-// the headers and the body. If you change what src/hello.js or src/server.js
-// sends back, a test fails and its message tells you which part changed.
+// Between them, the five tests check the three parts of a response that any
+// HTTP client sees, each where the contract defines it:
+// - the status code, in every test;
+// - the headers that matter, where they matter: `Content-Type` and
+//   `Content-Length` for GET and HEAD /hello, `Content-Type` for the 404s
+//   in 'An unknown path is not found', and `Allow` for the 405;
+// - the body: `Hello world`, the empty body of a HEAD response, `Not Found`
+//   and `Method Not Allowed`.
+// Reading a body is not the same as checking it: for `/hello/`, `/HELLO`
+// and `/`, 'Path matching is exact' checks only the status code, and reads
+// each body just to free the connection. If you change a part that is
+// checked, a test fails with a message that says what differed. A part no
+// test checks, such as the `Content-Length` of a 404, can change without
+// failing any test.
+//
 // Every request also carries a deadline (see `fetchWithDeadline` below), so a
-// server that never answers makes a test fail instead of leaving `npm test`
-// hanging.
+// server that never answers, or stops partway through a body, makes a test
+// fail instead of leaving `npm test` hanging.
 
 import { test, before, after } from 'node:test';
 // The `strict` flavour of `node:assert` makes `assert.equal(actual, expected)`
-// compare with `===`, so the string '11' and the number 11 count as different.
+// the same function as `assert.strictEqual`: it never converts one type into
+// another, so the string '11' and the number 11 count as different. It
+// compares the way `Object.is` does, which matches `===` except in two
+// cases: `NaN` counts as equal to `NaN`, and `0` and `-0` count as different.
 import assert from 'node:assert/strict';
 // The `.js` extension is required: ES modules import files by their full name.
 import { createServer, HOST } from '../src/server.js';
@@ -38,8 +55,14 @@ import { createServer, HOST } from '../src/server.js';
 // answer that never comes, for minutes. If a change to the router ever left a
 // request unanswered, which is the exact mistake the 404 tests below guard
 // against (see Step 3 in src/server.js), `npm test` would hang instead of
-// failing. With a deadline, that request is abandoned, `fetch` rejects with a
-// `TimeoutError`, and the test that sent it fails with that error.
+// failing. With a deadline, that request is abandoned once the time is up,
+// and which step fails depends on how far the answer had got by then:
+// - if the response headers have not arrived yet, `fetch` itself rejects
+//   with a `TimeoutError`;
+// - if the headers did arrive, `fetch` has already resolved with the
+//   response, so it is reading the body (`await res.text()`) that rejects
+//   with the `TimeoutError` instead.
+// Either way, the test that is waiting on that step fails with that error.
 //
 // Why 5 seconds: the server runs on this machine and answers in a few
 // milliseconds, so a real answer never comes close to the deadline. The wide
@@ -65,8 +88,11 @@ let baseUrl;
  * This is a deadline, not a pause and not a second attempt. Nothing waits: a
  * request answered in 3 milliseconds finishes in 3 milliseconds, and a
  * deadline that is never reached does not delay the end of the run. Nothing
- * is retried either: a request that misses its deadline is not sent again,
- * it rejects with a `TimeoutError` and fails the test.
+ * is retried either: a request that misses its deadline is not sent again.
+ * The deadline covers the whole exchange, so which Promise rejects with the
+ * `TimeoutError` depends on when it expires: the one this function returns,
+ * if the response headers have not arrived yet, or the one from reading the
+ * body, such as `res.text()`, if they have. Either way, the test fails.
  *
  * A new test, for example for a second route, gets the same protection by
  * sending its requests through this function too.
@@ -75,8 +101,11 @@ let baseUrl;
  * const res = await fetchWithDeadline('/hello', { method: 'HEAD' });
  *
  * @param {string} path Everything after the address: the path and, if there
- *   is one, the query string, such as `/hello?name=ada`. It is sent exactly as
- *   written.
+ *   is one, the query string, such as `/hello?name=ada`. It is appended to
+ *   the server's address, and `fetch` parses the result as a URL before
+ *   sending it, so what reaches the server can differ from what is written
+ *   here: dot segments are resolved (`/a/../hello` is sent as `/hello`), and
+ *   characters a URL cannot hold are percent-encoded (a space becomes `%20`).
  * @param {RequestInit} [options] The usual `fetch` options, such as
  *   `{ method: 'POST' }`. Any `signal` in them is replaced by the deadline.
  * @returns {Promise<Response>} The server's response.
@@ -201,8 +230,12 @@ test('HEAD /hello returns headers only', async () => {
 // consequences follow, and both are deliberate decisions rather than bugs:
 // - the query string is not part of the path, so `/hello?name=ada` still
 //   matches, and the query itself is never read;
-// - nothing is normalized, so a trailing slash (`/hello/`) or different
-//   letter casing (`/HELLO`) is a different path, and so is the root `/`.
+// - the router adds no normalization of its own to the path the URL parser
+//   gives it: no trailing slash is removed and no letter case is changed, so
+//   `/hello/` and `/HELLO` are different paths, and so is the root `/`.
+// The URL parser itself does tidy a few things before that comparison, such
+// as resolving dot segments (`/x/../hello` becomes `/hello`), but that is
+// part of reading a URL, not a rule this router adds.
 test('Path matching is exact', async () => {
   const withQuery = await fetchWithDeadline('/hello?name=ada');
   assert.equal(withQuery.status, 200, 'expected 200 for /hello?name=ada');

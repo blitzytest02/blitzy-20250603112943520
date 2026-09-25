@@ -36,11 +36,16 @@ import { createServer, DEFAULT_PORT, HOST } from './server.js';
 // forms.
 //
 // Environment variables are always text, so `Number.parseInt(text, 10)` turns
-// the value into a number (the 10 means "read it as a decimal number"). The
-// result is used only when it is a positive whole number. PORT unset, empty,
-// not a number, 0 or negative all fall back to DEFAULT_PORT from
-// src/server.js. Port 0 is refused on purpose: to `listen`, 0 means "any free
-// port", and a tutorial server needs an address you can predict.
+// the value into a number (the 10 means "read it as a decimal number"). It
+// takes the whole number at the start of the text, after any leading
+// whitespace and an optional + or - sign, and silently drops whatever follows
+// it. So `8080junk` selects port 8080, and `1.5` asks for port 1.
+//
+// The result is used only when it is a positive whole number. PORT falls back
+// to DEFAULT_PORT from src/server.js when it is unset, empty or does not start
+// with a number (such as `abc`), or when the number it starts with is 0 or
+// negative (such as `-5`). Port 0 is refused on purpose: to `listen`, 0 means
+// "any free port", and a tutorial server needs an address you can predict.
 //
 // A number too large to be a port (above 65535) is deliberately not checked
 // here: `listen` rejects it with Node's own ERR_SOCKET_BAD_PORT error, and the

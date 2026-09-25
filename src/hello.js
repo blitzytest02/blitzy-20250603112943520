@@ -23,14 +23,18 @@ export const GREETING = 'Hello world';
  *
  * Node creates a fresh pair of objects for every request that arrives and
  * hands them to the server's request listener, which passes them on to us.
- * Both types come from Node's built-in `node:http` module:
+ * Both types come from Node's built-in `node:http` module. The
+ * `import('node:http')` written inside the curly braces below is a type
+ * reference, read only by editors and type checkers so they can tell you
+ * what `req` and `res` hold. It is not a runtime import: it lives inside
+ * this comment, so Node never runs it, and the file still imports nothing.
  *
- * @param {http.IncomingMessage} req The request the client sent: its method
- *   (GET, POST, ...), its URL and its headers. This handler reads only
- *   `req.method`; it never reads a header, the query string or a request
- *   body.
- * @param {http.ServerResponse} res The response we write back: a status
- *   code, some headers and a body.
+ * @param {import('node:http').IncomingMessage} req The request the client
+ *   sent: its method (GET, POST, ...), its URL and its headers. This
+ *   handler reads only `req.method`; it never reads a header, the query
+ *   string or a request body.
+ * @param {import('node:http').ServerResponse} res The response we write
+ *   back: a status code, some headers and a body.
  * @returns {void} Nothing. The answer travels through `res`, not through a
  *   return value.
  */
@@ -59,19 +63,25 @@ export function helloHandler(req, res) {
     return;
   }
 
-  // Step 2: send the greeting.
+  // Step 2: write the success response. Only GET and HEAD get this far, and
+  // both receive the same status line and headers; they differ only in the
+  // body. A GET receives the greeting as its body, while a HEAD receives no
+  // body at all.
   //
   // `res.writeHead(status, headers)` prepares the first part of the response:
   // the status line (here `HTTP/1.1 200 OK`) and the headers. They always
-  // travel before the body, which is why they are set first.
+  // travel before any body, which is why they are set first.
   //
   // - `Content-Type` tells the client what kind of data the body holds.
   //   `text/plain` makes a browser show the words as text instead of guessing
   //   the type or offering a file download, and `charset=utf-8` says which
   //   character encoding turns those bytes back into letters.
-  // - `Content-Length` tells the client exactly how many bytes of body to
-  //   expect, so it knows where the response ends. Because this handler
-  //   sets it explicitly, `curl -i` always shows `Content-Length: 11` for
+  // - `Content-Length` is the size, in bytes, of the body a GET receives.
+  //   After a GET, the client reads exactly that many bytes of body, so it
+  //   knows where the response ends. A HEAD response carries the very same
+  //   header, reporting the size a GET would receive, but no body follows
+  //   it: the headers are the whole response. Because this handler sets the
+  //   header explicitly, `curl -i` always shows `Content-Length: 11` for
   //   this response.
   //   Not every header is that stable. Headers Node adds on its own can
   //   change from one response to the next: `Date` is filled in from the
@@ -85,11 +95,12 @@ export function helloHandler(req, res) {
     'Content-Length': Buffer.byteLength(GREETING),
   });
 
-  // `res.end(body)` sends the body and marks the response as finished. Every
-  // response must be ended: until it is, the client keeps waiting for more.
+  // `res.end(body)` hands Node the body and marks the response as finished.
+  // Every response must be ended: until it is, the client keeps waiting for
+  // more.
   //
-  // HEAD needs no separate branch. For a HEAD request Node sends the status
-  // line and headers (including `Content-Length: 11`, the size a GET would
-  // receive) and drops the body automatically.
+  // That one call is also why HEAD needs no separate branch. Node knows which
+  // method this request used, so for a GET it sends the 11 bytes of
+  // `GREETING` after the headers, and for a HEAD it drops them automatically.
   res.end(GREETING);
 }

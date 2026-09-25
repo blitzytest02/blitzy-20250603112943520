@@ -40,19 +40,22 @@ export const HOST = '127.0.0.1';
 
 // The fixed base URL used to turn a request target into a full URL.
 //
-// A request usually names only a path, such as `/hello?name=ada`, and the
-// URL parser needs a complete address to resolve a path against. Not every
-// address works as that base: a `mailto:` address cannot have a path resolved
-// against it at all, and a base with a path of its own, such as
-// `http://localhost/app/`, changes where a target that does not start with
-// `/` lands. A web address with nothing after the host, such as
-// `http://localhost`, is a suitable base: `/hello?name=ada` resolves against
-// it to exactly that path, and because we only ever read the path back out of
-// the result, the host it names is never used. The base is a constant rather
-// than something built from the request's `Host` header on purpose: we do not
-// need the host, and a `Host` value that Node's HTTP parser accepts can still
-// be one the URL parser rejects. It is not exported: the public surface of
-// this file is exactly DEFAULT_PORT, HOST and createServer.
+// The request target is the address the client asked for, which Node hands
+// the request listener as `req.url`. It is usually a relative URL such as
+// `/hello?name=ada`, made of the pathname `/hello` and the query `?name=ada`,
+// and the URL parser needs a complete address, the base, to resolve a
+// relative URL against. Not every address works as that base: a `mailto:`
+// address cannot have a relative URL resolved against it at all, and a base
+// with a path of its own, such as `http://localhost/app/`, changes where a
+// target that does not start with `/` lands. A web address with nothing after
+// the host, such as `http://localhost`, is a suitable base: `/hello?name=ada`
+// resolves against it to `http://localhost/hello?name=ada`, whose pathname is
+// `/hello`. We only ever read the pathname back out of the result, so neither
+// the host the base names nor the query is ever used. The base is a constant
+// rather than something built from the request's `Host` header on purpose:
+// we do not need the host, and a `Host` value that Node's HTTP parser accepts
+// can still be one the URL parser rejects. It is not exported: the public
+// surface of this file is exactly DEFAULT_PORT, HOST and createServer.
 const URL_BASE = 'http://localhost';
 
 /**
@@ -72,7 +75,17 @@ const URL_BASE = 'http://localhost';
  * import { createServer, DEFAULT_PORT, HOST } from './server.js';
  *
  * const server = createServer(); // nothing is listening yet
- * server.listen(DEFAULT_PORT, HOST); // now it is
+ *
+ * // `listen` returns straight away and binds the port in the background, so
+ * // the server is not ready yet on the line after it. Node calls the
+ * // function passed last (a 'listening' event listener) once the socket is
+ * // bound and the server accepts requests. If binding fails, for example
+ * // with EADDRINUSE because another program holds the port, Node emits an
+ * // 'error' event instead and never calls this function. src/index.js
+ * // handles both outcomes this way.
+ * server.listen(DEFAULT_PORT, HOST, () => {
+ *   // Now it is listening: from here on, the server answers requests.
+ * });
  *
  * @returns {http.Server} A server that has not been started yet.
  */
@@ -125,9 +138,15 @@ export function createServer() {
 
     // Step 3: answer everything else with 404 Not Found.
     //
-    // This part is required, not optional. A listener that returns without
-    // calling `res.end` sends nothing back, and the client sits waiting on an
-    // open connection until it gives up. The headers follow the same rules as
+    // This part is required, not optional. If this branch simply returned
+    // without writing and ending a reply, the client would get nothing back
+    // and would sit waiting on an open connection until it gave up. Sending
+    // some data is not the same as finishing: `res.write` can send the status
+    // line, the headers and part of a body early, but until `res.end` is
+    // called the response is unfinished and the client keeps waiting for the
+    // rest. `res.end(body)` below writes the body and finishes the response
+    // in one call; for a HEAD request Node leaves the body out but still
+    // finishes the response. The headers follow the same rules as
     // src/hello.js: say the body is plain UTF-8 text, and say exactly how many
     // bytes it holds (`Buffer.byteLength` counts bytes, here 9).
     const body = 'Not Found';
