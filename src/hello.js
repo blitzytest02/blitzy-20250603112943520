@@ -70,11 +70,16 @@ export function helloHandler(req, res) {
   //   the type or offering a file download, and `charset=utf-8` says which
   //   character encoding turns those bytes back into letters.
   // - `Content-Length` tells the client exactly how many bytes of body to
-  //   expect, so it knows where the response ends and `curl -i` prints the
-  //   same headers every time. `Buffer.byteLength` counts bytes, not
-  //   characters: the two happen to be equal for `Hello world` (11), but an
-  //   accented letter takes two bytes in UTF-8, and the header must carry
-  //   the byte count.
+  //   expect, so it knows where the response ends. Because this handler
+  //   sets it explicitly, `curl -i` always shows `Content-Length: 11` for
+  //   this response.
+  //   Not every header is that stable. Headers Node adds on its own can
+  //   change from one response to the next: `Date` is filled in from the
+  //   current time, to the second, and `Connection` depends on what the
+  //   client asked for.
+  //   `Buffer.byteLength` counts bytes, not characters: the two happen to
+  //   be equal for `Hello world` (11), but an accented letter takes two
+  //   bytes in UTF-8, and the header must carry the byte count.
   res.writeHead(200, {
     'Content-Type': 'text/plain; charset=utf-8',
     'Content-Length': Buffer.byteLength(GREETING),

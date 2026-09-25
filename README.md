@@ -18,7 +18,7 @@ Build and run a Node.js HTTP server with one endpoint, `/hello`, that answers wi
 
 ## What this project is
 
-This is a small Node.js HTTP server with exactly one endpoint, `/hello`. Send it a request for `/hello` and it answers with the text `Hello world`. That is the whole product. The point is not what the server does but how it is put together, so every file is short and explains itself in its comments.
+This is a small Node.js HTTP server with exactly one endpoint, `/hello`. Send it a request for `/hello` and it answers with the text `Hello world`. That is the whole product. The point is not what the server does but how it is put together, so the source and test files are short and explain themselves in their comments. The configuration files, `package.json`, `package-lock.json` and `.nvmrc`, carry no comments, so this README explains them instead.
 
 It uses only what ships with Node.js: the built-in `node:http` module for the server, the built-in `node:test` and `node:assert` modules for the tests, and the global `fetch` function as the tests' HTTP client. There are no dependencies to install: no web framework, no test library and no build step.
 
@@ -48,13 +48,13 @@ Check which Node.js version you have:
 node --version
 ```
 
-Any version from `v22.0.0` upwards works. For example:
+The version must be `v22.0.0` or later, the floor that `package.json` declares, and should start with `v24` (recommended) or `v22`, the two supported LTS lines this project is tested on. For example:
 
 ```text
 v24.21.0
 ```
 
-If you use a Node.js version manager such as nvm, the `.nvmrc` file names the development line, `24`, so running `nvm use` in the project folder selects it. The file is advisory: nothing in the project reads it, and you do not need to switch versions if yours is already 22 or newer.
+If you use a Node.js version manager such as nvm, the `.nvmrc` file names the development line, `24`. Running `nvm use` in the project folder switches to Node.js 24 if a 24 release is already installed. If none is, nvm stops and tells you to run `nvm install 24`: do that first, and it installs the latest 24.x release and switches to it. The file is advisory: nothing in the project reads it, and you do not need to switch versions if yours is already on Node.js 22 or 24.
 
 ## Install
 
@@ -143,7 +143,7 @@ Reading it from the top:
 
 - `HTTP/1.1 200 OK` is the status line. `200` means success.
 - `Content-Type` and `Content-Length` are set by `src/hello.js`. They say the body is plain text in UTF-8 and is 11 bytes long.
-- `Date`, `Connection` and `Keep-Alive` are added by Node.js itself. `Date` is the current time, so it is different on every request. `Connection: keep-alive` and `Keep-Alive: timeout=5` tell the client it may reuse the same connection for another request within 5 seconds.
+- `Date`, `Connection` and `Keep-Alive` are added by Node.js itself. `Date` is filled in from the current time, to the second, so it changes as time passes, but two requests made within the same second show the same value. `Connection: keep-alive` and `Keep-Alive: timeout=5` tell the client it may reuse the same connection for another request within 5 seconds.
 - The blank line marks the end of the headers.
 - `Hello world` is the body.
 
@@ -153,18 +153,49 @@ Windows 10 and later include curl as `curl.exe`. In PowerShell, type the `.exe`:
 
 ```powershell
 curl.exe http://127.0.0.1:3000/hello
+```
+
+```text
+Hello world
+```
+
+Add `-i` to see the status line and the headers:
+
+```powershell
 curl.exe -i http://127.0.0.1:3000/hello
 ```
 
-The output is the same as shown above. In `cmd.exe`, `curl` and `curl.exe` are the same program, so either works.
+```text
+HTTP/1.1 200 OK
+Content-Type: text/plain; charset=utf-8
+Content-Length: 11
+Date: <varies>
+Connection: keep-alive
+Keep-Alive: timeout=5
 
-If you prefer a PowerShell command, `Invoke-WebRequest` is the native alternative. It prints a summary of the response rather than only its body; look for `StatusCode : 200` and `Content : Hello world`.
-
-```powershell
-Invoke-WebRequest http://127.0.0.1:3000/hello
+Hello world
 ```
 
-If Windows PowerShell 5.1 answers that the Internet Explorer engine is not available, add `-UseBasicParsing` to that command.
+This is the same curl as on macOS and Linux, so the output matches the examples above. In `cmd.exe`, `curl` and `curl.exe` are the same program, so either works.
+
+If you prefer a PowerShell command, `Invoke-WebRequest` is the native alternative. Give it the `-UseBasicParsing` switch, so the same command works in every PowerShell version:
+
+```powershell
+Invoke-WebRequest -UseBasicParsing http://127.0.0.1:3000/hello
+```
+
+```text
+StatusCode        : 200
+StatusDescription : OK
+Content           : Hello world
+RawContent        : HTTP/1.1 200 OK
+                    ...
+RawContentLength  : 11
+```
+
+`Invoke-WebRequest` prints a summary of the response rather than only its body. The summary above is shortened: `...` stands for the rest of the headers and the body, and the real summary lists more properties, such as `Headers`. Look for `StatusCode : 200` and `Content : Hello world`.
+
+`-UseBasicParsing` tells PowerShell to read the response without the Internet Explorer engine. Without it, Windows PowerShell 5.1, the version built into Windows 10 and 11, hands the response to that engine to parse it as a web page. With Windows updates from December 9, 2025 onwards installed, it first stops at a `Security Warning: Script Execution Risk` question that ends `Do you want to continue?`. That question is a general safeguard for web pages that contain scripts, not a sign that anything is wrong with this server. Pressing Enter, or answering No, cancels the command, and PowerShell suggests running it again with `-UseBasicParsing`. On an older system without those updates and without the Internet Explorer engine, the command fails instead, with an error saying that the Internet Explorer engine is not available. PowerShell 7 and later never use the Internet Explorer engine and accept the switch without effect, so there the shorter form, `Invoke-WebRequest http://127.0.0.1:3000/hello`, works unchanged.
 
 ### Try the other answers
 
@@ -258,7 +289,7 @@ src/index.js  -->  src/server.js  -->  src/hello.js
 (starts it)        (routes it)         (answers /hello)
 ```
 
-The split between `src/index.js` and `src/server.js` is deliberate. Importing `src/server.js` does no work: it defines two constants and one function, and opens no network socket. Only `src/index.js`, which is run and never imported, starts a server listening. That is what lets the tests import `createServer`, start their own server on a port of their choosing, and never touch port 3000.
+The split between `src/index.js` and `src/server.js` is deliberate. Importing `src/server.js` does no work: it exports two constants (`DEFAULT_PORT` and `HOST`) and one function (`createServer`), keeps one private constant for parsing URLs, and opens no network socket. Only `src/index.js`, which is run and never imported, starts the application's server listening, on port 3000 or the port in `PORT`. That is what lets the tests import `createServer`, start their own server on a port of their choosing, and never touch port 3000.
 
 A good reading order is `src/hello.js`, then `src/server.js`, then `src/index.js`, then `test/hello.test.js`.
 
@@ -279,7 +310,7 @@ This project's `createServer()` returns that server without starting it. Whoever
 
 `req.url` is the raw request target, and it includes the query string: a request for `/hello?name=ada` has a `req.url` of `/hello?name=ada`, which would never equal `/hello`. So the request listener parses it with `new URL(req.url, 'http://localhost')` and keeps only the `pathname` part, `/hello`.
 
-`new URL` needs a complete address to resolve a path against, and any valid base works because only the path is read back out. The base is a fixed literal, `'http://localhost'`, rather than one built from the request's `Host` header, on purpose. The host is not needed, and a `Host` value that Node's HTTP parser accepts can still be one the URL parser rejects. An error thrown inside the request listener is caught by nothing, so it would stop the whole server. For the same reason, the listener first checks the target with `URL.canParse`: a target that cannot be parsed matches no route and receives an ordinary 404 instead of crashing the server.
+`new URL` needs a complete address to resolve a path against, and not every address works as that base: a `mailto:` address cannot have a path resolved against it at all, and a base with a path of its own, such as `http://localhost/app/`, changes where a target that does not start with `/` lands. A web address with nothing after the host, such as `http://localhost`, is a suitable base: `/hello?name=ada` resolves against it to exactly that path, and because only the path is read back out, the host it names is never used. The base is a fixed literal, `'http://localhost'`, rather than one built from the request's `Host` header, on purpose. The host is not needed, and a `Host` value that Node's HTTP parser accepts can still be one the URL parser rejects. An error thrown inside the request listener is caught by nothing, so it would stop the whole server. For the same reason, the listener first checks the target with `URL.canParse`: a target that cannot be parsed matches no route and receives an ordinary 404 instead of crashing the server.
 
 Matching is exact and case-sensitive:
 
@@ -344,9 +375,9 @@ Because `listen` returns before the operating system answers, the failure cannot
 
 Pressing Ctrl+C sends the program the `SIGINT` ("interrupt") signal. `src/index.js` handles it by calling `server.close`, which stops accepting new connections, closes connections that are sitting idle, and waits for any request still in progress to finish. The process then exits with code `0`, meaning "ended normally". The same handler also covers `SIGTERM`, the stop request that process managers use on macOS and Linux, so you never need anything other than Ctrl+C yourself.
 
-### ES modules (`package.json`)
+### ES modules (`package.json`, `src/server.js`)
 
-`"type": "module"` in `package.json` makes every `.js` file in the project an ES module. Files share code with `export` and `import`, the standard JavaScript syntax, and nothing uses `require`. Two details are worth noticing in the imports:
+`"type": "module"` in `package.json` makes every `.js` file in the project an ES module. Files share code with `export` and `import`, the standard JavaScript syntax, and nothing uses `require`. The imports at the top of `src/server.js` show two details worth noticing:
 
 ```js
 import http from 'node:http';
@@ -354,7 +385,6 @@ import { helloHandler } from './hello.js';
 ```
 
 Built-in modules are imported with the `node:` prefix, and imports of your own files include the `.js` extension, because ES modules import files by their full name.
-
 
 ## Change the port
 
@@ -366,10 +396,24 @@ bash or zsh (macOS, Linux, Git Bash on Windows):
 PORT=8080 npm start
 ```
 
+```text
+> node-hello-tutorial@1.0.0 start
+> node src/index.js
+
+Server listening at http://127.0.0.1:8080/ - try http://127.0.0.1:8080/hello
+```
+
 PowerShell:
 
 ```powershell
 $env:PORT=8080; npm start
+```
+
+```text
+> node-hello-tutorial@1.0.0 start
+> node src/index.js
+
+Server listening at http://127.0.0.1:8080/ - try http://127.0.0.1:8080/hello
 ```
 
 Command Prompt (`cmd.exe`):
@@ -378,11 +422,14 @@ Command Prompt (`cmd.exe`):
 set PORT=8080 && npm start
 ```
 
-After npm's two `>` lines, the startup line names the new port:
-
 ```text
+> node-hello-tutorial@1.0.0 start
+> node src/index.js
+
 Server listening at http://127.0.0.1:8080/ - try http://127.0.0.1:8080/hello
 ```
+
+Whichever form you use, the startup line names the new port.
 
 Call it from your second terminal (`curl.exe` on Windows):
 
@@ -397,7 +444,7 @@ Hello world
 A few things to know:
 
 - The bash and zsh form sets `PORT` for that one command only. The PowerShell and `cmd.exe` forms set it for the rest of that terminal window, so a later `npm start` in the same window also uses 8080. To go back to 3000, open a new window, or clear the variable with `Remove-Item Env:PORT` in PowerShell or `set PORT=` in `cmd.exe`.
-- A value that is not a positive whole number, such as an empty value, `abc`, `0` or `-5`, is ignored, and the server uses port 3000.
+- `PORT` is read with `Number.parseInt`, which takes the whole number at the start of the text and silently drops whatever follows it. The server uses that number only when it is a positive whole number. Otherwise, as with an empty value, `abc`, `0` or `-5`, it uses port 3000. Because trailing text is dropped, `8080junk` starts the server on port 8080 and `1.5` asks for port 1, so set `PORT` to digits only, such as `8080`.
 - Only the port can be changed. The host is always `127.0.0.1`, so the server stays reachable from your own computer only.
 
 ## Run the tests
@@ -489,7 +536,7 @@ Install a current LTS release of Node.js, 24 recommended, from <https://nodejs.o
 
 ### `curl` in PowerShell prints something unexpected
 
-If `curl` in PowerShell prints a block of response properties instead of `Hello world`, or complains about a parameter name, you are running PowerShell's `Invoke-WebRequest` alias rather than curl. Type `curl.exe` instead; see [On Windows](#on-windows).
+If `curl` in PowerShell prints a block of response properties instead of `Hello world`, complains about a parameter name, or stops at a `Security Warning: Script Execution Risk` question, you are running PowerShell's `Invoke-WebRequest` alias rather than curl. Type `curl.exe` instead; see [On Windows](#on-windows).
 
 ### curl cannot connect
 

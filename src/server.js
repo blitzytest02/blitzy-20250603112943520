@@ -11,8 +11,9 @@
 // top level it only defines constants and a function. That is what lets the
 // tests in test/hello.test.js create their own server and listen on port 0,
 // which asks the operating system for any free port, so they never compete
-// with a server you started yourself with `npm start`. Only src/index.js
-// binds a real socket.
+// with a server you started yourself with `npm start`. src/index.js alone
+// binds the application's own listener, on PORT or DEFAULT_PORT; the tests
+// bind short-lived sockets of their own, on ports the operating system picks.
 
 import http from 'node:http';
 import { helloHandler } from './hello.js';
@@ -21,8 +22,9 @@ import { helloHandler } from './hello.js';
  * The TCP port the server listens on when you do not choose one: 3000.
  *
  * This file only supplies the default. The override belongs to src/index.js,
- * which reads the `PORT` environment variable and falls back to this value
- * when `PORT` is not set to a positive whole number.
+ * which reads the `PORT` environment variable with `Number.parseInt` and
+ * falls back to this value when `PORT` is unset or the number read from it
+ * is not a positive whole number.
  */
 export const DEFAULT_PORT = 3000;
 
@@ -39,12 +41,18 @@ export const HOST = '127.0.0.1';
 // The fixed base URL used to turn a request target into a full URL.
 //
 // A request usually names only a path, such as `/hello?name=ada`, and the
-// URL parser needs a complete address to resolve a path against. Any valid
-// base works because we only ever read the path back out of the result. It is
-// a constant rather than something built from the request's `Host` header on
-// purpose: we do not need the host, and a `Host` value that Node's HTTP parser
-// accepts can still be one the URL parser rejects. It is not exported: the
-// public surface of this file is exactly DEFAULT_PORT, HOST and createServer.
+// URL parser needs a complete address to resolve a path against. Not every
+// address works as that base: a `mailto:` address cannot have a path resolved
+// against it at all, and a base with a path of its own, such as
+// `http://localhost/app/`, changes where a target that does not start with
+// `/` lands. A web address with nothing after the host, such as
+// `http://localhost`, is a suitable base: `/hello?name=ada` resolves against
+// it to exactly that path, and because we only ever read the path back out of
+// the result, the host it names is never used. The base is a constant rather
+// than something built from the request's `Host` header on purpose: we do not
+// need the host, and a `Host` value that Node's HTTP parser accepts can still
+// be one the URL parser rejects. It is not exported: the public surface of
+// this file is exactly DEFAULT_PORT, HOST and createServer.
 const URL_BASE = 'http://localhost';
 
 /**

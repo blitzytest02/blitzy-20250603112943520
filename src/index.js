@@ -7,11 +7,14 @@
 //   src/index.js  -->  src/server.js  -->  src/hello.js
 //   (starts it)        (routes it)         (answers /hello)
 //
-// This is the only file in the project that opens a network socket. The other
-// two only describe how to answer a request; this file decides when and where
-// the server listens, what happens if it cannot, and how it stops. Keeping that
-// work here is what lets the tests import src/server.js without starting
-// anything. This file exports nothing: it is run, never imported.
+// This is the only file of the application that opens a network socket: the
+// listening socket that `npm start` gives you, on PORT or DEFAULT_PORT. (The
+// tests open short-lived sockets of their own, on ports the operating system
+// picks.) The other two source files only describe how to answer a request;
+// this file decides when and where the server listens, what happens if it
+// cannot, and how it stops. Keeping that work here is what lets the tests
+// import src/server.js without starting anything. This file exports nothing:
+// it is run, never imported.
 //
 // It does four things, in order:
 //   1. works out which port to use;
@@ -66,13 +69,34 @@ const server = createServer();
 // arrives.
 //
 // For EADDRINUSE we print one line on stderr (the output stream meant for
-// errors) that says what went wrong and how to fix it, then exit with code 1,
-// the conventional "something failed" status. The line names the PORT
+// errors) that says what went wrong and how to fix it. The line names the PORT
 // variable rather than printing a ready-made command, because that command is
 // written differently in bash, PowerShell and cmd.exe; the README shows all
-// three. Any other error is unexpected, so it is thrown again rather than
-// hidden: Node then prints the full error with its stack trace and exits, and
-// you see exactly what happened.
+// three.
+//
+// The program then has to stop with code 1, the conventional "something
+// failed" status. It does that by setting `process.exitCode` to 1 rather than
+// by calling `process.exit(1)`. Printing to stderr can finish later than the
+// `console.error` call that asked for it: when the output goes through a pipe
+// (the `|` in a shell command) to a program that is reading slowly, or to a
+// terminal window on Windows, the text may still be waiting to be written out
+// when `console.error` returns. `process.exit` ends the program on the spot,
+// so that waiting message would be lost. Setting `exitCode` only records the
+// failing status. The program then ends on its own as soon as nothing is left
+// to do, and exits with that status. Here that is right after the message has
+// been written, because the server never started listening.
+//
+// The Ctrl+C handlers from step 4 are removed at the same moment. The server
+// never started, so they have nothing to close, and their `process.exit(0)`
+// would report success if a signal arrived while the message was still being
+// written. Without them, a signal in that moment stops the program the
+// ordinary way, with a failing status. (`shutdown` is defined in step 4
+// below; that is fine, because this code runs only later, once `listen` has
+// failed.)
+//
+// Any other error is unexpected, so it is thrown again rather than hidden:
+// Node then prints the full error with its stack trace and exits, and you see
+// exactly what happened.
 server.on('error', (error) => {
   if (error.code !== 'EADDRINUSE') {
     throw error;
@@ -81,7 +105,9 @@ server.on('error', (error) => {
   console.error(
     `Port ${port} is already in use. Set the PORT environment variable to a free port, for example 3001, and start again - see "Change the port" in the README.`,
   );
-  process.exit(1);
+  process.exitCode = 1;
+  process.off('SIGINT', shutdown);
+  process.off('SIGTERM', shutdown);
 });
 
 // Step 3: start listening.
