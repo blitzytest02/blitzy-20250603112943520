@@ -91,13 +91,13 @@ const server = createServer();
 // to do, and exits with that status. Here that is right after the message has
 // been written, because the server never started listening.
 //
-// The Ctrl+C handlers from step 4 are removed at the same moment. The server
-// never started, so they have nothing to close, and their `process.exit(0)`
-// would report success if a signal arrived while the message was still being
-// written. Without them, a signal in that moment stops the program the
-// ordinary way, with a failing status. (`shutdown` is defined in step 4
-// below; that is fine, because this code runs only later, once `listen` has
-// failed.)
+// The stop-signal handlers from step 4, for SIGINT (sent by Ctrl+C) and
+// SIGTERM, are removed at the same moment. The server never started, so they
+// have nothing to close, and their `process.exit(0)` would report success if a
+// signal arrived while the message was still being written. Without them, a
+// signal in that moment stops the program the ordinary way, with a failing
+// status. (`shutdown` is defined in step 4 below; that is fine, because this
+// code runs only later, once `listen` has failed.)
 //
 // Any other error is unexpected, so it is thrown again rather than hidden:
 // Node then prints the full error with its stack trace and exits, and you see

@@ -83,6 +83,8 @@ found 0 vulnerabilities
 
 The time varies from run to run. "up to date" and "1 package" mean npm had nothing to download: the only package it checked is this project itself, because the project has no dependencies. No `node_modules` folder is created. The committed `package-lock.json` records that empty dependency list, and `npm install` leaves it unchanged.
 
+On Windows, if PowerShell refuses to run `npm` because running scripts is disabled on this system, see [PowerShell says running scripts is disabled](#powershell-says-running-scripts-is-disabled).
+
 Running `npm install` is still the right habit. The day a project gains dependencies, this is the step that fetches them.
 
 ## Run
@@ -106,7 +108,7 @@ The two lines starting with `>` come from npm: `npm start` runs the `start` scri
 
 The command does not return you to the prompt. The server keeps running in the foreground, waiting for requests, so leave this terminal open while you work through the next section.
 
-To stop the server, press **Ctrl+C** in this terminal. This works the same on macOS, Linux and Windows. The server closes, nothing more is printed, and your prompt comes back.
+To stop the server, press **Ctrl+C** in this terminal. This works the same on macOS, Linux and Windows. The server closes, and in a macOS or Linux terminal, or in PowerShell when you typed plain `npm`, nothing more is printed and your prompt comes back. In Command Prompt (`cmd.exe`), or in PowerShell when you typed `npm.cmd` (see [PowerShell says running scripts is disabled](#powershell-says-running-scripts-is-disabled)), npm runs as a Windows batch file, so Windows then asks `Terminate batch job (Y/N)?`. Type `Y` and press Enter. The server has already closed at that point; the question is only about npm's batch file.
 
 ## Call the endpoint
 
@@ -236,7 +238,7 @@ Keep-Alive: timeout=5
 Method Not Allowed
 ```
 
-Any path other than `/hello` is answered with `404 Not Found`:
+A path other than `/hello`, such as `/goodbye`, is answered with `404 Not Found`:
 
 ```bash
 curl -i http://127.0.0.1:3000/goodbye
@@ -322,9 +324,9 @@ Matching is exact and case-sensitive:
 | `/hello?name=ada` | `200` with `Hello world`; the query string is never read |
 | `/hello/` | `404`; a trailing slash makes it a different path |
 | `/HELLO` | `404`; paths are case-sensitive |
-| `/`, `/goodbye`, anything else | `404` with `Not Found` |
+| `/`, `/goodbye`, and any other path the URL parser does not resolve to `/hello` | `404` with `Not Found` |
 
-These are decisions, not bugs: the router compares the path with `'/hello'` and nothing else, and it does not normalize slashes or letter case.
+These are decisions, not bugs: the router compares the pathname with `'/hello'` and nothing else, and it does not normalize slashes or letter case itself. The pathname it compares is the one `new URL` produces, though, and the URL parser tidies some targets on the way; the router accepts the result as it is. The parser resolves `.` and `..` segments, so the raw target `/x/../hello` has the pathname `/hello`. It also reads a target that starts with two slashes as an address on another host, so `//example/hello` has the pathname `/hello` too. Both get `200` with `Hello world`. You rarely see the first case, because curl and browsers resolve `.` and `..` themselves before they send a request; `curl --path-as-is` sends the path exactly as you typed it. A leading `//` is sent as typed even without that option.
 
 The `404` branch is required, not a nicety. If the listener simply returned for an unknown path without writing and ending a reply, the client would get nothing back and would sit waiting on an open connection until it gave up. Sending some data is not the same as finishing: `res.write` can send the status line, the headers and part of a body early, but until `res.end` is called the response is unfinished and the client keeps waiting for the rest.
 
@@ -500,7 +502,7 @@ To see how much of the code the tests exercise, run the test runner with coverag
 node --test --experimental-test-coverage
 ```
 
-After the test results, it prints a coverage report:
+On Node.js 24, after the test results, it prints this coverage report:
 
 ```text
 ℹ start of coverage report
@@ -518,15 +520,22 @@ After the test results, it prints a coverage report:
 
 Every line and every branch of `src/hello.js` and `src/server.js` is tested. `src/index.js` does not appear because the tests never load it: it binds a real port and reads the environment, and the tests create their own server instead.
 
+Node.js 24 leaves test files out of the report by default, and Node.js 22 does not. On Node.js 22 the report therefore has an extra `test` group with a `hello.test.js` row, and its `all files` totals include that file, so some of them read below 100%. The `hello.js` and `server.js` rows are the same on both lines, and they are the ones that show the application code is fully tested.
+
 ## Troubleshooting
 
 ### The port is already in use
 
-`npm start` stops straight away with this message:
+`npm start` stops straight away, and its whole output looks like this:
 
 ```text
+> node-hello-tutorial@1.0.0 start
+> node src/index.js
+
 Port 3000 is already in use. Set the PORT environment variable to a free port, for example 3001, and start again - see "Change the port" in the README.
 ```
+
+The two lines starting with `>` are npm's usual banner, the same as under [Run](#run). The last line is the server's own message, and it is the one to act on. Nothing else follows it, and your prompt comes back.
 
 The process exits with code `1`. Another program already holds the port named in the message, most often an earlier `npm start` still running in another terminal. Either find that terminal and press Ctrl+C there, or start the server on a free port as shown in [Change the port](#change-the-port).
 
@@ -535,6 +544,38 @@ The process exits with code `1`. Another program already holds the port named in
 `node --version` prints a version below `v22.0.0`, and `npm install` prints an `EBADENGINE` "Unsupported engine" warning that names `node-hello-tutorial@1.0.0`, the required range `>=22.0.0`, and your current version. npm continues after the warning, but this project is not supported on that version.
 
 Install the newest release of a supported Node.js LTS line, 24 recommended, from <https://nodejs.org>, or with your version manager (for example `nvm install 24`). Open a new terminal and check `node --version` again.
+
+### PowerShell says running scripts is disabled
+
+In PowerShell, the name `npm` runs `npm.ps1`, a PowerShell script that Node.js installs alongside `npm.cmd`. Windows PowerShell 5.1, the version built into Windows 10 and 11, blocks scripts by default: on those systems its default execution policy, the setting that decides which scripts may run, is `Restricted`. PowerShell 7 and later default to `RemoteSigned` instead, which lets `npm.ps1` run, so this error is met in Windows PowerShell. There, `npm install`, or any other npm command, stops with an error that begins like this (the folder in it may differ):
+
+```text
+npm : File C:\Program Files\nodejs\npm.ps1 cannot be loaded because running scripts is disabled on this system.
+```
+
+More lines follow, and they vary between PowerShell versions. The words `running scripts is disabled on this system` are the part to look for. Nothing is wrong with Node.js or with this project, and any one of the three ways below gets you past it.
+
+The simplest way changes no setting: type `npm.cmd` wherever this README says `npm`. `npm.cmd` is the Command Prompt form of the same npm, and the execution policy covers only PowerShell scripts, so it never blocks `npm.cmd`:
+
+```powershell
+npm.cmd install
+npm.cmd start
+$env:PORT=8080; npm.cmd start
+npm.cmd test
+```
+
+Each prints the same output this README shows for `npm`. The other commands in this README are not affected: `node` and `curl.exe` are programs and `Invoke-WebRequest` is built into PowerShell, so type them as shown. When you stop a server started with `npm.cmd`, Windows asks one extra question after Ctrl+C, as described under [Run](#run).
+
+The second way is to use Command Prompt (`cmd.exe`) instead of PowerShell. There, `npm` always runs `npm.cmd`, so every npm command works as written; use the Command Prompt form under [Change the port](#change-the-port) to set the port.
+
+The third way lets the plain `npm` work in PowerShell, but it changes a security setting, so read this first. `Get-ExecutionPolicy` prints the setting in force. The second command below changes it for your own Windows account only, and needs no administrator rights:
+
+```powershell
+Get-ExecutionPolicy
+Set-ExecutionPolicy -Scope CurrentUser RemoteSigned
+```
+
+If PowerShell asks you to confirm the change, answer `Y`. `RemoteSigned` lets scripts that are already on your computer, such as `npm.ps1`, run, while a script downloaded from the internet still needs a trusted digital signature. To undo the change, run `Set-ExecutionPolicy -Scope CurrentUser Undefined`. On a computer managed by an employer or a school, a policy set by the administrator can take precedence over this setting; if PowerShell says so, use `npm.cmd` instead. Advice found elsewhere sometimes suggests the `Unrestricted` or `Bypass` policy, or a change for every account on the computer: each of those switches off more protection than npm needs, so leave them alone.
 
 ### `curl` in PowerShell prints something unexpected
 

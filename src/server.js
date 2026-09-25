@@ -115,8 +115,10 @@ export function createServer() {
     // asks the same question without throwing: when it answers false,
     // `pathname` is `false`, which matches no route, and the request gets the
     // ordinary 404 below. (Prefer `URL.canParse` to `URL.parse` here:
-    // `URL.parse` needs Node.js 22.1.0, and this project supports every
-    // release from 22.0.0.)
+    // `URL.parse` needs Node.js 22.1.0, but the engines floor in
+    // package.json (`>=22.0.0`) admits 22.0.0 too, so the router must work
+    // there. That floor is not the list of supported versions: the project
+    // supports and is tested on the two LTS lines, Node.js 24 and 22.)
     const pathname =
       URL.canParse(req.url, URL_BASE) && new URL(req.url, URL_BASE).pathname;
 
