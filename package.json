@@ -1,0 +1,14 @@
+{
+  "name": "node-hello-tutorial",
+  "version": "1.0.0",
+  "description": "A Node.js tutorial project: an HTTP server with one endpoint, /hello, that returns Hello world.",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "node src/index.js",
+    "test": "node --test"
+  },
+  "engines": {
+    "node": ">=22.0.0"
+  }
+}
